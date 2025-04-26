@@ -110,6 +110,10 @@ def main():
     # Train the model
     print("Huấn luyện mô hình...")
     model.train(X_img_train, X_env_train, y_plant_train, y_disease_train)
+    
+    # Đảm bảo lưu mô hình sau khi huấn luyện
+    print("Lưu mô hình...")
+    model.save_training_data()
 
     # Make predictions on test data
     print("\nKiểm tra mô hình với dữ liệu test...")

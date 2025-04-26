@@ -43,24 +43,10 @@ class PlantDiseaseModel:
         ]
         
         # Khởi tạo mô hình CNN cho xử lý hình ảnh
-        self.image_model = self._build_cnn_model()
+        self.image_model = None
         
-        # Khởi tạo và huấn luyện Random Forest với dữ liệu mẫu
-        self.env_model = RandomForestClassifier(n_estimators=100, random_state=42)
-        
-        # Tạo dữ liệu mẫu cho huấn luyện ban đầu
-        n_samples = 100
-        X_env = np.random.rand(n_samples, 4)  # 4 features: temperature, humidity, soil_moisture, light
-        X_env[:, 0] = X_env[:, 0] * 15 + 20  # Temperature: 20-35°C
-        X_env[:, 1] = X_env[:, 1] * 50 + 40  # Humidity: 40-90%
-        X_env[:, 2] = X_env[:, 2] * 60 + 20  # Soil moisture: 20-80%
-        X_env[:, 3] = X_env[:, 3] * 18000 + 2000  # Light: 2000-20000 lux
-        
-        # Tạo nhãn ngẫu nhiên cho dữ liệu mẫu
-        y_env = np.random.randint(0, len(self.disease_classes), n_samples)
-        
-        # Huấn luyện mô hình Random Forest với dữ liệu mẫu
-        self.env_model.fit(X_env, y_env)
+        # Khởi tạo mô hình Random Forest
+        self.env_model = None
         
         # Khởi tạo danh sách dữ liệu training
         self.training_data = {
@@ -70,19 +56,38 @@ class PlantDiseaseModel:
             'image_paths': []
         }
         
-        # Tải dữ liệu training nếu có
-        self.load_training_data()
-        
-        # Nếu không có dữ liệu training, tạo dữ liệu mẫu
-        if len(self.training_data['env_data']) == 0:
-            print("Không có dữ liệu training, tạo dữ liệu mẫu...")
+        # Tải dữ liệu training và mô hình nếu có
+        if self.load_training_data():
+            print("Đã tải mô hình và dữ liệu training thành công!")
+        else:
+            print("Khởi tạo mô hình mới...")
+            # Khởi tạo mô hình mới
+            self.image_model = self._build_cnn_model()
+            self.env_model = RandomForestClassifier(n_estimators=100, random_state=42)
+            
+            # Tạo dữ liệu mẫu cho huấn luyện ban đầu
+            n_samples = 100
+            X_env = np.random.rand(n_samples, 4)  # 4 features: temperature, humidity, soil_moisture, light
+            X_env[:, 0] = X_env[:, 0] * 15 + 20  # Temperature: 20-35°C
+            X_env[:, 1] = X_env[:, 1] * 50 + 40  # Humidity: 40-90%
+            X_env[:, 2] = X_env[:, 2] * 60 + 20  # Soil moisture: 20-80%
+            X_env[:, 3] = X_env[:, 3] * 18000 + 2000  # Light: 2000-20000 lux
+            
+            # Tạo nhãn ngẫu nhiên cho dữ liệu mẫu
+            y_env = np.random.randint(0, len(self.disease_classes), n_samples)
+            
+            # Huấn luyện mô hình Random Forest với dữ liệu mẫu
+            self.env_model.fit(X_env, y_env)
+            
+            # Lưu dữ liệu mẫu
             self.training_data['env_data'] = X_env.tolist()
             # Chuyển đổi nhãn thành one-hot encoding
             labels = np.zeros((n_samples, len(self.disease_classes)))
             for i, label in enumerate(y_env):
                 labels[i, label] = 1
             self.training_data['labels'] = labels.tolist()
-            # Lưu dữ liệu
+            
+            # Lưu dữ liệu và mô hình
             self.save_training_data()
     
     def _build_cnn_model(self):
@@ -128,7 +133,7 @@ class PlantDiseaseModel:
             # Thêm đường dẫn ảnh mới
             self.training_data['image_paths'].append(new_image_path)
             
-            # Lưu dữ liệu
+            # Lưu dữ liệu trước khi huấn luyện
             self.save_training_data()
             
             # Huấn luyện lại mô hình
@@ -175,11 +180,14 @@ class PlantDiseaseModel:
                 # Huấn luyện mô hình
                 self.train(X_img, X_env, None, y)  # Pass None for plant_labels since we're not using it
                 
+                # Lưu mô hình và dữ liệu sau khi huấn luyện
+                self.save_training_data()
+                
         except Exception as e:
             raise Exception(f"Lỗi khi huấn luyện lại mô hình: {str(e)}")
     
     def save_training_data(self):
-        """Lưu dữ liệu training vào file"""
+        """Lưu dữ liệu training và mô hình vào file"""
         try:
             # Tạo thư mục data nếu chưa tồn tại
             if not os.path.exists('data'):
@@ -198,22 +206,28 @@ class PlantDiseaseModel:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             
             # Lưu mô hình CNN
-            if not os.path.exists('data/image_model'):
-                os.makedirs('data/image_model')
-            self.image_model.save('data/image_model')
+            if self.image_model is not None:
+                if not os.path.exists('data/image_model'):
+                    os.makedirs('data/image_model')
+                self.image_model.save('data/image_model')
             
             # Lưu mô hình Random Forest
-            with open('data/env_model.pkl', 'wb') as f:
-                pickle.dump(self.env_model, f)
+            if self.env_model is not None:
+                with open('data/env_model.pkl', 'wb') as f:
+                    pickle.dump(self.env_model, f)
                 
-            print("Đã lưu dữ liệu training thành công!")
+            print("Đã lưu dữ liệu training và mô hình thành công!")
                 
         except Exception as e:
             print(f"Lỗi khi lưu dữ liệu training: {str(e)}")
     
     def load_training_data(self):
-        """Tải dữ liệu training từ file"""
+        """Tải dữ liệu training và mô hình từ file. Trả về True nếu tải thành công."""
         try:
+            data_loaded = False
+            model_loaded = False
+            
+            # Tải dữ liệu training
             if os.path.exists('data/training_data.json'):
                 with open('data/training_data.json', 'r', encoding='utf-8') as f:
                     data = json.load(f)
@@ -236,32 +250,40 @@ class PlantDiseaseModel:
                         self.plant_classes = data['plant_classes']
                         
                     print(f"Đã tải {len(valid_indices)} mẫu dữ liệu training")
+                    data_loaded = len(valid_indices) > 0
             
             # Tải mô hình CNN nếu có
             if os.path.exists('data/image_model'):
-                print("Đang tải mô hình CNN...")
-                self.image_model = tf.keras.models.load_model('data/image_model')
+                try:
+                    print("Đang tải mô hình CNN...")
+                    self.image_model = tf.keras.models.load_model('data/image_model')
+                    model_loaded = True
+                except Exception as e:
+                    print(f"Lỗi khi tải mô hình CNN: {str(e)}")
+                    self.image_model = self._build_cnn_model()
             else:
                 print("Khởi tạo mô hình CNN mới...")
                 self.image_model = self._build_cnn_model()
             
             # Tải mô hình Random Forest nếu có
             if os.path.exists('data/env_model.pkl'):
-                print("Đang tải mô hình Random Forest...")
-                with open('data/env_model.pkl', 'rb') as f:
-                    self.env_model = pickle.load(f)
+                try:
+                    print("Đang tải mô hình Random Forest...")
+                    with open('data/env_model.pkl', 'rb') as f:
+                        self.env_model = pickle.load(f)
+                    model_loaded = model_loaded and True
+                except Exception as e:
+                    print(f"Lỗi khi tải mô hình Random Forest: {str(e)}")
+                    self.env_model = RandomForestClassifier(n_estimators=100, random_state=42)
             else:
                 print("Khởi tạo mô hình Random Forest mới...")
                 self.env_model = RandomForestClassifier(n_estimators=100, random_state=42)
                 
-            print("Đã tải dữ liệu training thành công!")
-                    
+            return data_loaded and model_loaded
+                
         except Exception as e:
             print(f"Lỗi khi tải dữ liệu training: {str(e)}")
-            # Nếu có lỗi, khởi tạo mô hình mới
-            print("Khởi tạo mô hình mới do lỗi khi tải...")
-            self.image_model = self._build_cnn_model()
-            self.env_model = RandomForestClassifier(n_estimators=100, random_state=42)
+            return False
     
     def preprocess_image(self, image):
         # Ensure image is in uint8 format
@@ -305,16 +327,40 @@ class PlantDiseaseModel:
         
         # Print shapes for debugging
         print(f"Processed images shape: {processed_images.shape}")
-        print(f"Disease labels shape: {disease_labels.shape}")
-        print(f"Number of disease classes: {len(self.disease_classes)}")
+        # print(f"Disease labels shape: {disease_labels.shape}") # Di chuyển xuống dưới
+        # print(f"Number of disease classes: {len(self.disease_classes)}") # Di chuyển xuống dưới
+
+        # ***** Thêm Debugging Nhãn *****
+        print(f"DEBUG train(): Input disease_labels shape: {disease_labels.shape}")
+        print(f"DEBUG train(): Current len(self.disease_classes): {len(self.disease_classes)}")
+        # In một vài mẫu nhãn đầu vào (ví dụ: 5 mẫu đầu)
+        print(f"DEBUG train(): Sample input labels (first 5):\n{disease_labels[:5]}")
+        # *******************************
         
         # Ensure disease_labels are in the correct format and have the right number of classes
         if len(disease_labels.shape) == 1:
+             # ***** Thêm Debugging *****
+            print("DEBUG train(): Labels are 1D, converting to categorical.")
+            # **************************
             disease_labels = tf.keras.utils.to_categorical(disease_labels, num_classes=len(self.disease_classes))
         elif disease_labels.shape[1] != len(self.disease_classes):
+             # ***** Thêm Debugging *****
+            print(f"DEBUG train(): Label shape mismatch! Input shape {disease_labels.shape[1]} != Current classes {len(self.disease_classes)}. Re-encoding.")
+            # **************************
             # If labels have wrong number of classes, convert to indices first
             disease_indices = np.argmax(disease_labels, axis=1)
+            # ***** Thêm Debugging *****
+            print(f"DEBUG train(): Argmax indices from input labels (first 5): {disease_indices[:5]}")
+            # **************************
             disease_labels = tf.keras.utils.to_categorical(disease_indices, num_classes=len(self.disease_classes))
+            # ***** Thêm Debugging *****
+            print(f"DEBUG train(): Re-encoded labels shape: {disease_labels.shape}")
+            print(f"DEBUG train(): Sample re-encoded labels (first 5):\n{disease_labels[:5]}")
+            # **************************
+        else:
+             # ***** Thêm Debugging *****
+            print("DEBUG train(): Label shape matches class count. Using as is.")
+             # **************************
         
         # Print shapes after processing
         print(f"Disease labels shape after processing: {disease_labels.shape}")
@@ -337,6 +383,9 @@ class PlantDiseaseModel:
         print("\nTraining Random Forest model...")
         # Convert disease_labels to class indices for Random Forest
         disease_indices = np.argmax(disease_labels, axis=1)
+        # ***** Thêm Debugging *****
+        print(f"DEBUG train(): Final indices for RandomForest (first 5): {disease_indices[:5]}")
+        # **************************
         self.env_model.fit(env_data, disease_indices)
         print("Training completed!")
         
