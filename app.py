@@ -240,86 +240,97 @@ def diagnosis():
             # Trường hợp không xác định được nút nào được nhấn (lỗi logic hoặc form?) 
             return render_template('diagnosis.html', error="Hành động không xác định.", saved_values=saved_values)
 
-        # --- Tiếp tục xử lý ảnh và dự đoán --- (Logic này dùng chung temperature, humidity, etc. đã được xác định ở trên)
+        # --- Tiếp tục xử lý ảnh và dự đoán ---
         try:
             if 'image' in request.files:
                 image_file = request.files['image']
                 if image_file and image_file.filename != '':
-                    # ... (lưu ảnh, xử lý ảnh)
+                    # Lưu ảnh
                     filename = secure_filename(image_file.filename)
                     image_path = os.path.join(UPLOAD_FOLDER, filename)
                     image_file.save(image_path)
-                    session['last_image'] = filename
-                    session['current_image_path'] = image_path
-                    saved_values['last_image'] = filename
-                    saved_values['current_image_path'] = image_path
-
-                    img = Image.open(image_path)
-                    img = img.resize((224, 224))
-                    img = np.array(img)
-
-                    env_data = np.array([temperature, humidity, soil_moisture, light])
-
-                    disease_pred = model.predict(img, env_data)
-                    pred_disease = np.argmax(disease_pred[0])
-                    confidence = disease_pred[0][pred_disease]
-
-                    prediction_result = {
-                        'disease': model.disease_classes[pred_disease],
-                        'confidence': f"{confidence*100:.2f}",
-                        'image_path': url_for('static', filename=f'uploads/{filename}'),
-                        'sensor_data': {
-                            'temperature': temperature,
-                            'humidity': humidity,
-                            'soil_moisture': soil_moisture,
-                            'light': light
-                        },
-                        'data_source': env_data_source
-                    }
-                    prediction_result['probabilities'] = { disease: f"{prob*100:.2f}%" for disease, prob in zip(model.disease_classes, disease_pred[0]) }
                     
-                    # Xóa dữ liệu form khỏi session nếu thành công (vì đã dùng hoặc lấy từ Arduino)
-                    session.pop('form_temperature', None)
-                    session.pop('form_humidity', None)
-                    session.pop('form_soil_moisture', None)
-                    session.pop('form_light', None)
+                    # Lưu đường dẫn ảnh vào session
+                    session['current_image_path'] = image_path
+                    session['last_image'] = filename
+                    
+                    # Đọc ảnh
+                    img = Image.open(image_path)
+                    
+                    # Dự đoán
+                    env_data = (temperature, humidity, soil_moisture, light)
+                    prediction_result = model.predict(img, env_data)
+                    
+                    if prediction_result:
+                        # Lưu kết quả dự đoán vào session
+                        session['prediction_result'] = prediction_result
+                        
+                        # Chuẩn bị dữ liệu để hiển thị
+                        filename = os.path.basename(image_path)
+                        image_url = url_for('static', filename=f'uploads/{filename}')
+                        
+                        display_data = {
+                            'plant_type': prediction_result['plant_type'],
+                            'plant_confidence': f"{prediction_result['plant_confidence']*100:.2f}",
+                            'disease': prediction_result['disease'],
+                            'disease_confidence': f"{prediction_result['disease_confidence']*100:.2f}",
+                            'image_disease': prediction_result['image_disease'],
+                            'image_confidence': f"{prediction_result['image_confidence']*100:.2f}",
+                            'env_disease': prediction_result['env_disease'],
+                            'env_confidence': f"{prediction_result['env_confidence']*100:.2f}",
+                            'image_url': image_url
+                        }
+                        
+                        # Hiển thị kết quả trực tiếp trong trang diagnosis.html thay vì chuyển sang confirm.html
+                        return render_template(
+                            'diagnosis.html',
+                            prediction=display_data,
+                            saved_values=saved_values,
+                            arduino_status=arduino_status,
+                            sensor_data_display=latest_sensor_data.queue[0] if not latest_sensor_data.empty() else None
+                        )
+                    else:
+                        return render_template(
+                            'diagnosis.html',
+                            error="Không thể thực hiện dự đoán. Vui lòng thử lại.",
+                            saved_values=saved_values,
+                            arduino_status=arduino_status,
+                            sensor_data_display=latest_sensor_data.queue[0] if not latest_sensor_data.empty() else None
+                        )
                 else:
-                    prediction_result = {'error': 'Vui lòng chọn một file hình ảnh hợp lệ.'}
+                    return render_template(
+                        'diagnosis.html',
+                        error="Vui lòng chọn ảnh để chẩn đoán.",
+                        saved_values=saved_values,
+                        arduino_status=arduino_status,
+                        sensor_data_display=latest_sensor_data.queue[0] if not latest_sensor_data.empty() else None
+                    )
             else:
-                prediction_result = {'error': 'Không tìm thấy file hình ảnh trong yêu cầu.'}
+                return render_template(
+                    'diagnosis.html',
+                    error="Không tìm thấy file ảnh trong yêu cầu.",
+                    saved_values=saved_values,
+                    arduino_status=arduino_status,
+                    sensor_data_display=latest_sensor_data.queue[0] if not latest_sensor_data.empty() else None
+                )
+                
         except Exception as e:
-            error_info = traceback.format_exc()
-            prediction_result = {
-                'error': f'Có lỗi xảy ra trong quá trình chẩn đoán: {str(e)}',
-                'details': error_info
-            }
-        # --- Kết thúc xử lý ảnh và dự đoán ---
+            print(f"Lỗi khi xử lý ảnh và dự đoán: {str(e)}")
+            traceback.print_exc()
+            return render_template(
+                'diagnosis.html',
+                error=f"Lỗi khi xử lý ảnh và dự đoán: {str(e)}",
+                saved_values=saved_values,
+                arduino_status=arduino_status,
+                sensor_data_display=latest_sensor_data.queue[0] if not latest_sensor_data.empty() else None
+            )
 
-    # --- Logic GET Request và Render Template (Giữ nguyên) ---
-    # Lấy lại trạng thái arduino và data display cuối cùng trước khi render
-    current_sensor_data_display = None
-    if not latest_sensor_data.empty():
-        current_sensor_data_display = latest_sensor_data.queue[0]
-        arduino_status = "Đã nhận dữ liệu"
-    elif not arduino_connected:
-        arduino_status = "Chưa kết nối Arduino"
-    else:
-        arduino_status = "Đang chờ dữ liệu..."
-
-    # Cập nhật saved_values lần cuối trước khi render (cho trường hợp GET hoặc POST bị lỗi trước khi predict)
-    saved_values['last_image'] = session.get('last_image', None)
-    saved_values['current_image_path'] = session.get('current_image_path', None)
-    saved_values['temperature'] = session.get('form_temperature', '')
-    saved_values['humidity'] = session.get('form_humidity', '')
-    saved_values['soil_moisture'] = session.get('form_soil_moisture', '')
-    saved_values['light'] = session.get('form_light', '')
-
+    # Nếu là GET request hoặc có lỗi, hiển thị trang chẩn đoán
     return render_template(
         'diagnosis.html',
-        prediction=prediction_result,
         saved_values=saved_values,
         arduino_status=arduino_status,
-        sensor_data_display=current_sensor_data_display
+        sensor_data_display=latest_sensor_data.queue[0] if not latest_sensor_data.empty() else None
     )
 
 
@@ -352,6 +363,107 @@ def training():
     session.pop('last_manual_data', None)
 
     if request.method == 'POST':
+        # Xử lý hành động xác nhận huấn luyện
+        if request.form.get('action') == 'confirm_training':
+            try:
+                # Lấy dữ liệu từ form
+                image_path = request.form.get('image_path')
+                
+                # Chuyển đổi URL sang đường dẫn file thực
+                if image_path:
+                    if image_path.startswith('/static/uploads/'):
+                        # Đây là URL tương đối, chuyển thành đường dẫn file
+                        filename = image_path.split('/')[-1]
+                        image_path = os.path.join(UPLOAD_FOLDER, filename)
+                    elif image_path.startswith('static/uploads/'):
+                        # Biến thể khác của URL
+                        filename = image_path.split('/')[-1]
+                        image_path = os.path.join(UPLOAD_FOLDER, filename)
+                
+                if not image_path or not os.path.exists(image_path):
+                    # In ra để debug
+                    print(f"ERROR: Không tìm thấy hình ảnh tại đường dẫn: {image_path}")
+                    print(f"Form image_path đã gửi: {request.form.get('image_path')}")
+                    
+                    if 'current_image_path' in session:
+                        # Thử sử dụng đường dẫn lưu trong session
+                        image_path = session['current_image_path']
+                        print(f"Thử sử dụng đường dẫn từ session: {image_path}")
+                        
+                        if not os.path.exists(image_path):
+                            print(f"Đường dẫn từ session cũng không tồn tại.")
+                    
+                    return render_template(
+                        'training.html',
+                        error="Không tìm thấy hình ảnh đã tải lên. Vui lòng thử lại.",
+                        saved_values=saved_values,
+                        disease_classes=model.disease_classes,
+                        plant_classes=model.plant_classes,
+                        arduino_status=arduino_status
+                    )
+                
+                # Lấy thông số môi trường
+                temperature = float(request.form.get('temperature', 0))
+                humidity = float(request.form.get('humidity', 0))
+                soil_moisture = float(request.form.get('soil_moisture', 0))
+                light = float(request.form.get('light', 0))
+                
+                # Lấy nhãn đúng
+                correct_plant_idx = int(request.form.get('correct_plant', 0))
+                disease_index = request.form.get('disease_index')
+                
+                # Mở ảnh
+                img = Image.open(image_path)
+                
+                if disease_index == 'other':
+                    # Xử lý trường hợp bệnh khác
+                    other_disease = request.form.get('other_disease', '').strip()
+                    if not other_disease:
+                        return render_template(
+                            'training.html',
+                            error="Vui lòng nhập tên bệnh khi chọn 'Bệnh khác'.",
+                            saved_values=saved_values,
+                            disease_classes=model.disease_classes,
+                            plant_classes=model.plant_classes,
+                            arduino_status=arduino_status
+                        )
+                    
+                    # Thêm bệnh mới vào danh sách
+                    if other_disease not in model.disease_classes:
+                        model.disease_classes.append(other_disease)
+                    
+                    # Lấy index của bệnh mới hoặc đã có
+                    correct_disease_idx = model.disease_classes.index(other_disease)
+                else:
+                    correct_disease_idx = int(disease_index)
+                
+                # Thêm dữ liệu vào tập huấn luyện
+                env_data = (temperature, humidity, soil_moisture, light)
+                model.add_training_data(img, image_path, env_data, correct_disease_idx, correct_plant_idx)
+                
+                # Hiển thị thông báo thành công
+                return render_template(
+                    'training.html',
+                    message=f"Đã thêm dữ liệu huấn luyện thành công! Bệnh: {model.disease_classes[correct_disease_idx]}, Loại cây: {model.plant_classes[correct_plant_idx]}",
+                    saved_values=saved_values,
+                    disease_classes=model.disease_classes,
+                    plant_classes=model.plant_classes,
+                    arduino_status=arduino_status
+                )
+                
+            except Exception as e:
+                error_info = traceback.format_exc()
+                return render_template(
+                    'training.html',
+                    error=f"Lỗi khi xác nhận huấn luyện: {str(e)}",
+                    details=error_info,
+                    saved_values=saved_values,
+                    disease_classes=model.disease_classes,
+                    plant_classes=model.plant_classes,
+                    arduino_status=arduino_status
+                )
+                
+        # Xử lý nút chẩn đoán (không thay đổi)
         session.pop('form_temperature', None)
         session.pop('form_humidity', None)
         session.pop('form_soil_moisture', None)
@@ -380,6 +492,7 @@ def training():
                     error="Không thể chẩn đoán bằng Arduino. Vui lòng kiểm tra kết nối hoặc dữ liệu cảm biến.",
                     saved_values=saved_values,
                     disease_classes=model.disease_classes,
+                    plant_classes=model.plant_classes,
                     arduino_status=arduino_status,
                     sensor_data_display=latest_sensor_data.queue[0] if not latest_sensor_data.empty() else None
                 )
@@ -404,6 +517,7 @@ def training():
                      error="Vui lòng nhập đầy đủ thông số môi trường để chẩn đoán thủ công.",
                      saved_values=saved_values,
                      disease_classes=model.disease_classes,
+                     plant_classes=model.plant_classes,
                      arduino_status=arduino_status,
                      sensor_data_display=latest_sensor_data.queue[0] if not latest_sensor_data.empty() else None
                  )
@@ -425,11 +539,16 @@ def training():
                      error="Giá trị nhập vào cho thông số môi trường không hợp lệ.",
                      saved_values=saved_values,
                      disease_classes=model.disease_classes,
+                     plant_classes=model.plant_classes,
                      arduino_status=arduino_status,
                      sensor_data_display=latest_sensor_data.queue[0] if not latest_sensor_data.empty() else None
                  )
         else:
-             return render_template('training.html', error="Hành động không xác định.", saved_values=saved_values, disease_classes=model.disease_classes)
+             return render_template('training.html', 
+                                  error="Hành động không xác định.", 
+                                  saved_values=saved_values, 
+                                  disease_classes=model.disease_classes,
+                                  plant_classes=model.plant_classes)
 
         # --- Tiếp tục xử lý ảnh và dự đoán --- (Dùng env_data_for_predict)
         try:
@@ -446,31 +565,45 @@ def training():
                     saved_values['current_image_path'] = image_path
 
                     img = Image.open(image_path)
-                    img = img.resize((224, 224))
-                    img = np.array(img)
-
+                    
                     # Tạo env_data từ dict env_data_for_predict
-                    env_data = np.array([env_data_for_predict['temperature'], env_data_for_predict['humidity'],
-                                         env_data_for_predict['soil_moisture'], env_data_for_predict['light']])
+                    env_data = (env_data_for_predict['temperature'], env_data_for_predict['humidity'],
+                               env_data_for_predict['soil_moisture'], env_data_for_predict['light'])
 
                     disease_pred = model.predict(img, env_data)
-                    pred_disease = np.argmax(disease_pred[0])
-                    confidence = disease_pred[0][pred_disease]
-
-                    prediction_result = {
-                        'disease': model.disease_classes[pred_disease],
-                        'confidence': f"{confidence*100:.2f}",
-                        'image_path': url_for('static', filename=f'uploads/{filename}'),
-                        'sensor_data': env_data_for_predict,
-                        'data_source': env_data_source
-                    }
-                    prediction_result['probabilities'] = { disease: f"{prob*100:.2f}%" for disease, prob in zip(model.disease_classes, disease_pred[0]) }
                     
-                    # Xóa dữ liệu form khỏi session nếu thành công
-                    session.pop('form_temperature', None)
-                    session.pop('form_humidity', None)
-                    session.pop('form_soil_moisture', None)
-                    session.pop('form_light', None)
+                    # Xử lý kết quả trả về từ hàm predict
+                    if disease_pred:
+                        # Kiểm tra nếu có thông báo lỗi từ mô hình
+                        if 'error' in disease_pred:
+                            prediction_result = {
+                                'error': disease_pred['message'] if 'message' in disease_pred else 'Không thể dự đoán với dữ liệu hiện tại',
+                                'show_training_form': True,  # Vẫn hiển thị form huấn luyện ngay cả khi có lỗi
+                                'image_path': url_for('static', filename=f'uploads/{filename}'),
+                                'sensor_data': env_data_for_predict
+                            }
+                        else:
+                            prediction_result = {
+                                'disease': disease_pred['disease'],
+                                'confidence': f"{disease_pred['disease_confidence']*100:.2f}",
+                                'image_path': url_for('static', filename=f'uploads/{filename}'),
+                                'sensor_data': env_data_for_predict,
+                                'data_source': env_data_source,
+                                'plant_type': disease_pred['plant_type'],
+                                'plant_confidence': f"{disease_pred['plant_confidence']*100:.2f}",
+                                'image_disease': disease_pred['image_disease'],
+                                'image_confidence': f"{disease_pred['image_confidence']*100:.2f}",
+                                'env_disease': disease_pred['env_disease'],
+                                'env_confidence': f"{disease_pred['env_confidence']*100:.2f}",
+                                'image_url': url_for('static', filename=f'uploads/{filename}')
+                            }
+                    else:
+                        prediction_result = {
+                            'error': 'Không thể thực hiện dự đoán. Vui lòng thử lại.',
+                            'show_training_form': True,  # Vẫn hiển thị form huấn luyện khi có lỗi khác
+                            'image_path': url_for('static', filename=f'uploads/{filename}'),
+                            'sensor_data': env_data_for_predict
+                        }
                 else:
                     prediction_result = {'error': 'Vui lòng chọn một file hình ảnh hợp lệ.'}
             else:
@@ -507,182 +640,47 @@ def training():
         prediction=prediction_result,
         saved_values=saved_values,
         disease_classes=model.disease_classes,
+        plant_classes=model.plant_classes,
         arduino_status=arduino_status,
         sensor_data_display=current_sensor_data_display
     )
 
-@app.route('/confirm', methods=['POST'])
+@app.route('/confirm', methods=['GET', 'POST'])
 def confirm_prediction():
-    saved_values = { # Chỉ cần lấy ảnh từ session
-        'last_image': session.get('last_image', None),
-        'current_image_path': session.get('current_image_path', None),
-        # Thêm giá trị form để hiển thị lại nếu confirm lỗi
-        'temperature': session.get('form_temperature', ''),
-        'humidity': session.get('form_humidity', ''),
-        'soil_moisture': session.get('form_soil_moisture', ''),
-        'light': session.get('form_light', '')
-    }
-    # Xác định nguồn dữ liệu đã dùng và lấy dữ liệu đó
-    env_data_to_train = None
-    data_source = None
-    last_sensor_data = session.get('last_sensor_data')
-    last_manual_data = session.get('last_manual_data')
-
-    if last_sensor_data:
-        env_data_to_train = last_sensor_data
-        data_source = 'arduino'
-        print("Confirm - Su dung du lieu Arduino da luu")
-    elif last_manual_data:
-        env_data_to_train = last_manual_data
-        data_source = 'manual'
-        print(f"Confirm - Su dung du lieu manual da luu: {last_manual_data}")
+    if request.method == 'POST':
+        # Xử lý dữ liệu POST
+        prediction_data = request.json
+        if prediction_data:
+            # Lưu dữ liệu vào session
+            session['prediction_result'] = prediction_data
+            return jsonify({'status': 'success'})
+        return jsonify({'status': 'error', 'message': 'No data received'}), 400
     else:
-        # Trường hợp không có dữ liệu nào được lưu (lỗi logic trước đó?)
-        return render_template(
-            'training.html',
-            error="Không tìm thấy dữ liệu môi trường đã sử dụng cho lần chẩn đoán trước.",
-            saved_values=saved_values,
-            disease_classes=model.disease_classes,
-            # Cần lấy lại trạng thái Arduino hiện tại để hiển thị
-            arduino_status = "Đã nhận dữ liệu" if not latest_sensor_data.empty() else ("Chưa kết nối Arduino" if not arduino_connected else "Đang chờ dữ liệu..."),
-            sensor_data_display=latest_sensor_data.queue[0] if not latest_sensor_data.empty() else None
-        )
-
-    arduino_status_display = "Đã sử dụng dữ liệu Arduino" if data_source == 'arduino' else "Đã sử dụng dữ liệu nhập tay"
-
-    try:
-        disease_index_str = request.form['disease_index']
-        image_path = session.get('current_image_path')
-
-        # Lấy các giá trị từ env_data_to_train
-        temperature = env_data_to_train.get('temperature')
-        humidity = env_data_to_train.get('humidity')
-        soil_moisture = env_data_to_train.get('soil_moisture')
-        light = env_data_to_train.get('light')
-
-        if image_path and os.path.exists(image_path) and None not in [temperature, humidity, soil_moisture, light]:
-            env_data_list = [temperature, humidity, soil_moisture, light] # Dùng list cho add_training_data
-
-            if disease_index_str == 'other':
-                other_disease = request.form.get('other_disease', '').strip()
-                if not other_disease:
-                    # Prediction cũ để hiển thị lại
-                    prediction_result = {
-                         'image_path': url_for('static', filename=f'uploads/{session.get("last_image")}') if session.get("last_image") else None,
-                         'sensor_data': env_data_to_train, # Dữ liệu đã dùng
-                         'data_source': data_source
-                    }
-                    return render_template(
-                        'training.html',
-                        error="Vui lòng nhập tên bệnh khác",
-                        saved_values=saved_values,
-                        disease_classes=model.disease_classes,
-                        prediction=prediction_result, # Gửi lại prediction cũ
-                        arduino_status=arduino_status_display
-                    )
-
-                if other_disease not in model.disease_classes:
-                    # ... (logic thêm bệnh mới, xây lại model)
-                     model.disease_classes.append(other_disease)
-                     print("Xay dung lai mo hinh CNN do co lop moi...")
-                     model.image_model = model._build_cnn_model()
-                     print("Luu y: Can huan luyen lai toan bo mo hinh voi du lieu day du.")
-                     model.save_training_data()
-
-                disease_index = model.disease_classes.index(other_disease)
+        # Xử lý GET request
+        prediction_result = session.get('prediction_result')
+        if prediction_result:
+            # Chuẩn bị dữ liệu để hiển thị
+            if 'current_image_path' in session:
+                image_path = session['current_image_path']
+                filename = os.path.basename(image_path)
+                image_url = url_for('static', filename=f'uploads/{filename}')
+                
+                display_data = {
+                    'plant_type': prediction_result['plant_type'],
+                    'plant_confidence': f"{prediction_result['plant_confidence']*100:.2f}%",
+                    'disease': prediction_result['disease'],
+                    'disease_confidence': f"{prediction_result['disease_confidence']*100:.2f}%",
+                    'image_disease': prediction_result['image_disease'],
+                    'image_confidence': f"{prediction_result['image_confidence']*100:.2f}%",
+                    'env_disease': prediction_result['env_disease'],
+                    'env_confidence': f"{prediction_result['env_confidence']*100:.2f}%",
+                    'image_url': image_url
+                }
+                
+                return render_template('confirm.html', prediction=display_data)
             else:
-                disease_index = int(disease_index_str)
-                if disease_index < 0 or disease_index >= len(model.disease_classes):
-                     raise ValueError("Chỉ số bệnh không hợp lệ.")
-
-            with open(image_path, 'rb') as f:
-                 image_bytes = f.read()
-
-            print(f"Them du lieu training: image={os.path.basename(image_path)}, env={env_data_list}, label_idx={disease_index}, label={model.disease_classes[disease_index]}")
-
-            model.add_training_data(
-                image=image_bytes,
-                image_path=image_path,
-                env_data=env_data_list,
-                label=disease_index
-            )
-
-            # Xóa dữ liệu đã dùng khỏi session
-            if data_source == 'arduino':
-                session.pop('last_sensor_data', None)
-            elif data_source == 'manual':
-                session.pop('last_manual_data', None)
-            # Xóa luôn dữ liệu form nếu còn sót
-            session.pop('form_temperature', None)
-            session.pop('form_humidity', None)
-            session.pop('form_soil_moisture', None)
-            session.pop('form_light', None)
-
-            prediction_result = None
-            if session.get('last_image'):
-                 prediction_result = {
-                    'image_path': url_for('static', filename=f'uploads/{session.get("last_image")}')
-                 }
-
-            return render_template(
-                'training.html',
-                message="Đã thêm dữ liệu vào tập huấn luyện và cập nhật mô hình thành công!",
-                saved_values=saved_values, # Chỉ còn ảnh
-                prediction=prediction_result, # Chỉ hiển thị lại ảnh
-                disease_classes=model.disease_classes,
-                arduino_status="Nhập dữ liệu mới để huấn luyện tiếp", # Reset status
-                sensor_data_display=latest_sensor_data.queue[0] if not latest_sensor_data.empty() else None # Hiển thị data mới nhất từ Arduino nếu có
-            )
-        else:
-            error_msg = "Không tìm thấy ảnh đã upload hoặc dữ liệu môi trường không hợp lệ."
-            # ... (logic tạo prediction_result cũ để hiển thị lại)
-            prediction_result = {
-                 'image_path': url_for('static', filename=f'uploads/{session.get("last_image")}') if session.get("last_image") else None,
-                 'sensor_data': env_data_to_train,
-                 'data_source': data_source
-            }
-            return render_template(
-                'training.html',
-                error=error_msg,
-                saved_values=saved_values,
-                disease_classes=model.disease_classes,
-                prediction=prediction_result, # Gửi lại prediction cũ
-                arduino_status=arduino_status_display
-            )
-
-    except KeyError as ke:
-         # ... (xử lý lỗi KeyError, tương tự như cũ nhưng dùng arduino_status_display)
-         error_msg = f"Thiếu dữ liệu trong form hoặc session: {str(ke)}"
-         prediction_result = {
-             'image_path': url_for('static', filename=f'uploads/{session.get("last_image")}') if session.get("last_image") else None,
-             'sensor_data': env_data_to_train,
-             'data_source': data_source
-         }
-         return render_template(
-            'training.html',
-            error=error_msg,
-            saved_values=saved_values,
-            disease_classes=model.disease_classes,
-            prediction=prediction_result,
-            arduino_status=arduino_status_display
-         )
-    except Exception as e:
-        # ... (xử lý lỗi Exception, tương tự như cũ nhưng dùng arduino_status_display)
-        error_info = traceback.format_exc()
-        print(f"ERROR in /confirm: {error_info}")
-        prediction_result = {
-            'image_path': url_for('static', filename=f'uploads/{session.get("last_image")}') if session.get("last_image") else None,
-            'sensor_data': env_data_to_train,
-            'data_source': data_source
-        }
-        return render_template(
-            'training.html',
-            error=f"Lỗi khi xác nhận kết quả: {str(e)}",
-            saved_values=saved_values,
-            disease_classes=model.disease_classes,
-            prediction=prediction_result,
-            arduino_status=arduino_status_display
-        )
+                return redirect(url_for('diagnosis'))
+        return redirect(url_for('diagnosis'))
 
 # Hàm để dừng thread an toàn khi tắt ứng dụng (ví dụ: Ctrl+C)
 def signal_handler(sig, frame):

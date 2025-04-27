@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2 class="mb-4">Kết quả chẩn đoán</h2>
+    
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Thông tin cây</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <h6>Loại cây:</h6>
+                        <p class="lead">{{ prediction.plant_type }}</p>
+                        <div class="progress">
+                            <div class="progress-bar bg-success" role="progressbar" 
+                                 style="width: {{ prediction.plant_confidence }}"
+                                 aria-valuenow="{{ prediction.plant_confidence|replace('%', '') }}" 
+                                 aria-valuemin="0" aria-valuemax="100">
+                                {{ prediction.plant_confidence }}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Thông tin bệnh</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <h6>Kết quả chẩn đoán:</h6>
+                        <p class="lead">{{ prediction.disease }}</p>
+                        <div class="progress">
+                            <div class="progress-bar bg-success" role="progressbar" 
+                                 style="width: {{ prediction.disease_confidence }}"
+                                 aria-valuenow="{{ prediction.disease_confidence|replace('%', '') }}" 
+                                 aria-valuemin="0" aria-valuemax="100">
+                                {{ prediction.disease_confidence }}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <h6>Kết quả từ hình ảnh:</h6>
+                        <p>{{ prediction.image_disease }} ({{ prediction.image_confidence }})</p>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <h6>Kết quả từ môi trường:</h6>
+                        <p>{{ prediction.env_disease }} ({{ prediction.env_confidence }})</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-12">
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Hình ảnh đã chụp</h5>
+                </div>
+                <div class="card-body text-center">
+                    <img src="{{ prediction.image_url }}" class="img-fluid" alt="Hình ảnh cây">
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between">
+                <a href="{{ url_for('diagnosis') }}" class="btn btn-secondary">Quay lại chẩn đoán</a>
+                <a href="{{ url_for('index') }}" class="btn btn-primary">Về trang chủ</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

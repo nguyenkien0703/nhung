@@ -10,6 +10,7 @@ import os
 import json
 import pickle
 import shutil
+import traceback
 
 class PlantDiseaseModel:
     def __init__(self):
@@ -44,6 +45,7 @@ class PlantDiseaseModel:
         
         # Khởi tạo mô hình CNN cho xử lý hình ảnh
         self.image_model = None
+        self.plant_type_model = None  # Thêm mô hình nhận diện loại cây
         
         # Khởi tạo mô hình Random Forest
         self.env_model = None
@@ -53,7 +55,8 @@ class PlantDiseaseModel:
             'images': [],
             'env_data': [],
             'labels': [],
-            'image_paths': []
+            'image_paths': [],
+            'plant_types': []
         }
         
         # Tải dữ liệu training và mô hình nếu có
@@ -63,31 +66,11 @@ class PlantDiseaseModel:
             print("Khởi tạo mô hình mới...")
             # Khởi tạo mô hình mới
             self.image_model = self._build_cnn_model()
+            self.plant_type_model = self._build_plant_type_model()  # Khởi tạo mô hình nhận diện loại cây
             self.env_model = RandomForestClassifier(n_estimators=100, random_state=42)
             
-            # Tạo dữ liệu mẫu cho huấn luyện ban đầu
-            n_samples = 100
-            X_env = np.random.rand(n_samples, 4)  # 4 features: temperature, humidity, soil_moisture, light
-            X_env[:, 0] = X_env[:, 0] * 15 + 20  # Temperature: 20-35°C
-            X_env[:, 1] = X_env[:, 1] * 50 + 40  # Humidity: 40-90%
-            X_env[:, 2] = X_env[:, 2] * 60 + 20  # Soil moisture: 20-80%
-            X_env[:, 3] = X_env[:, 3] * 18000 + 2000  # Light: 2000-20000 lux
-            
-            # Tạo nhãn ngẫu nhiên cho dữ liệu mẫu
-            y_env = np.random.randint(0, len(self.disease_classes), n_samples)
-            
-            # Huấn luyện mô hình Random Forest với dữ liệu mẫu
-            self.env_model.fit(X_env, y_env)
-            
-            # Lưu dữ liệu mẫu
-            self.training_data['env_data'] = X_env.tolist()
-            # Chuyển đổi nhãn thành one-hot encoding
-            labels = np.zeros((n_samples, len(self.disease_classes)))
-            for i, label in enumerate(y_env):
-                labels[i, label] = 1
-            self.training_data['labels'] = labels.tolist()
-            
-            # Lưu dữ liệu và mô hình
+            # Lưu mô hình trống (không tạo dữ liệu mẫu ngẫu nhiên)
+            print("Khởi tạo mô hình mới không có dữ liệu mẫu...")
             self.save_training_data()
     
     def _build_cnn_model(self):
@@ -107,7 +90,24 @@ class PlantDiseaseModel:
                      metrics=['accuracy'])
         return model
     
-    def add_training_data(self, image, image_path, env_data, label):
+    def _build_plant_type_model(self):
+        model = Sequential([
+            Conv2D(32, (3, 3), activation='relu', input_shape=(224, 224, 3)),
+            MaxPooling2D((2, 2)),
+            Conv2D(64, (3, 3), activation='relu'),
+            MaxPooling2D((2, 2)),
+            Conv2D(64, (3, 3), activation='relu'),
+            MaxPooling2D((2, 2)),
+            Flatten(),
+            Dense(64, activation='relu'),
+            Dense(len(self.plant_classes), activation='softmax')
+        ])
+        model.compile(optimizer='adam',
+                     loss='categorical_crossentropy',
+                     metrics=['accuracy'])
+        return model
+    
+    def add_training_data(self, image, image_path, env_data, label, plant_type_idx=0):
         """Thêm dữ liệu mới vào tập training"""
         try:
             # Tạo thư mục data/images nếu chưa tồn tại
@@ -125,13 +125,22 @@ class PlantDiseaseModel:
             # Thêm dữ liệu môi trường
             self.training_data['env_data'].append(env_data)
             
-            # Thêm nhãn
+            # Thêm nhãn bệnh
             label_one_hot = np.zeros(len(self.disease_classes))
             label_one_hot[label] = 1
             self.training_data['labels'].append(label_one_hot.tolist())
             
             # Thêm đường dẫn ảnh mới
             self.training_data['image_paths'].append(new_image_path)
+            
+            # Nếu có thông tin về plant_type trong training_data
+            if 'plant_types' not in self.training_data:
+                self.training_data['plant_types'] = []
+            
+            # Thêm thông tin loại cây
+            plant_type_one_hot = np.zeros(len(self.plant_classes))
+            plant_type_one_hot[plant_type_idx] = 1
+            self.training_data['plant_types'].append(plant_type_one_hot.tolist())
             
             # Lưu dữ liệu trước khi huấn luyện
             self.save_training_data()
@@ -170,15 +179,22 @@ class PlantDiseaseModel:
                 # Lọc dữ liệu chỉ giữ lại các mẫu có ảnh hợp lệ
                 X_img = np.array(images)
                 X_env = np.array([self.training_data['env_data'][i] for i in valid_indices])
-                y = np.array([self.training_data['labels'][i] for i in valid_indices])
+                y_disease = np.array([self.training_data['labels'][i] for i in valid_indices])
+                
+                # Lấy dữ liệu loại cây nếu có
+                y_plant = None
+                if 'plant_types' in self.training_data and len(self.training_data['plant_types']) > 0:
+                    y_plant = np.array([self.training_data['plant_types'][i] for i in valid_indices])
                 
                 # Cập nhật lại training_data
                 self.training_data['env_data'] = [self.training_data['env_data'][i] for i in valid_indices]
                 self.training_data['labels'] = [self.training_data['labels'][i] for i in valid_indices]
                 self.training_data['image_paths'] = [self.training_data['image_paths'][i] for i in valid_indices]
+                if 'plant_types' in self.training_data:
+                    self.training_data['plant_types'] = [self.training_data['plant_types'][i] for i in valid_indices]
                 
                 # Huấn luyện mô hình
-                self.train(X_img, X_env, None, y)  # Pass None for plant_labels since we're not using it
+                self.train(X_img, X_env, y_plant, y_disease)
                 
                 # Lưu mô hình và dữ liệu sau khi huấn luyện
                 self.save_training_data()
@@ -198,6 +214,7 @@ class PlantDiseaseModel:
                 'env_data': self.training_data['env_data'],
                 'labels': self.training_data['labels'],
                 'image_paths': self.training_data['image_paths'],
+                'plant_types': self.training_data['plant_types'],
                 'disease_classes': self.disease_classes,  # Lưu thêm danh sách bệnh
                 'plant_classes': self.plant_classes      # Lưu thêm danh sách cây
             }
@@ -210,6 +227,12 @@ class PlantDiseaseModel:
                 if not os.path.exists('data/image_model'):
                     os.makedirs('data/image_model')
                 self.image_model.save('data/image_model')
+            
+            # Lưu mô hình nhận diện loại cây
+            if self.plant_type_model is not None:
+                if not os.path.exists('data/plant_type_model'):
+                    os.makedirs('data/plant_type_model')
+                self.plant_type_model.save('data/plant_type_model')
             
             # Lưu mô hình Random Forest
             if self.env_model is not None:
@@ -242,6 +265,7 @@ class PlantDiseaseModel:
                     self.training_data['env_data'] = [data['env_data'][i] for i in valid_indices]
                     self.training_data['labels'] = [data['labels'][i] for i in valid_indices]
                     self.training_data['image_paths'] = [data['image_paths'][i] for i in valid_indices]
+                    self.training_data['plant_types'] = [data['plant_types'][i] for i in valid_indices]
                     
                     # Tải lại danh sách bệnh và cây
                     if 'disease_classes' in data:
@@ -265,6 +289,19 @@ class PlantDiseaseModel:
                 print("Khởi tạo mô hình CNN mới...")
                 self.image_model = self._build_cnn_model()
             
+            # Tải mô hình nhận diện loại cây nếu có
+            if os.path.exists('data/plant_type_model'):
+                try:
+                    print("Đang tải mô hình nhận diện loại cây...")
+                    self.plant_type_model = tf.keras.models.load_model('data/plant_type_model')
+                    model_loaded = model_loaded and True
+                except Exception as e:
+                    print(f"Lỗi khi tải mô hình nhận diện loại cây: {str(e)}")
+                    self.plant_type_model = self._build_plant_type_model()
+            else:
+                print("Khởi tạo mô hình nhận diện loại cây mới...")
+                self.plant_type_model = self._build_plant_type_model()
+            
             # Tải mô hình Random Forest nếu có
             if os.path.exists('data/env_model.pkl'):
                 try:
@@ -286,22 +323,30 @@ class PlantDiseaseModel:
             return False
     
     def preprocess_image(self, image):
-        # Ensure image is in uint8 format
-        if image.dtype != np.uint8:
-            image = (image * 255).astype(np.uint8)
-        
-        # Resize if needed
-        if image.shape[:2] != (224, 224):
-            image = cv2.resize(image, (224, 224))
-        
-        # Convert to float32 and normalize
-        image = image.astype(np.float32) / 255.0
-        
-        # Add batch dimension if needed
-        if len(image.shape) == 3:
-            image = np.expand_dims(image, axis=0)
-        
-        return image
+        """Tiền xử lý hình ảnh cho mô hình"""
+        try:
+            # Chuyển đổi PIL Image sang numpy array nếu cần
+            if isinstance(image, Image.Image):
+                image = np.array(image)
+            
+            # Resize ảnh nếu cần
+            if image.shape[:2] != (224, 224):
+                image = cv2.resize(image, (224, 224))
+            
+            # Chuyển đổi sang float32 và chuẩn hóa
+            if image.dtype != np.float32 or image.max() > 1.0:
+                image = image.astype(np.float32) / 255.0
+            
+            # Thêm batch dimension nếu cần
+            if len(image.shape) == 3:
+                image = np.expand_dims(image, axis=0)
+            
+            return image
+            
+        except Exception as e:
+            print(f"Lỗi khi tiền xử lý ảnh: {str(e)}")
+            traceback.print_exc()
+            raise
     
     def preprocess_environment_data(self, temperature, humidity, soil_moisture, light):
         try:
@@ -317,7 +362,7 @@ class PlantDiseaseModel:
             raise Exception(f"Lỗi xử lý dữ liệu môi trường: {str(e)}")
     
     def train(self, images, env_data, plant_labels, disease_labels, epochs=10, batch_size=32):
-        print("Training CNN model...")
+        print("Training CNN models...")
         # Ensure images are properly preprocessed
         processed_images = []
         for img in images:
@@ -325,44 +370,78 @@ class PlantDiseaseModel:
             processed_images.append(processed_img[0])  # Remove batch dimension
         processed_images = np.array(processed_images)
         
+        # Điều chỉnh số epochs dựa vào số lượng mẫu
+        num_samples = len(images)
+        if num_samples < 5:
+            # Khi có ít dữ liệu, tăng số epochs để học kỹ hơn
+            adjusted_epochs = 30
+            print(f"Phát hiện ít dữ liệu ({num_samples} mẫu), tăng số epochs lên {adjusted_epochs}")
+        elif num_samples < 10:
+            adjusted_epochs = 20
+            print(f"Phát hiện ít dữ liệu ({num_samples} mẫu), tăng số epochs lên {adjusted_epochs}")
+        else:
+            adjusted_epochs = epochs
+            
         # Print shapes for debugging
         print(f"Processed images shape: {processed_images.shape}")
-        # print(f"Disease labels shape: {disease_labels.shape}") # Di chuyển xuống dưới
-        # print(f"Number of disease classes: {len(self.disease_classes)}") # Di chuyển xuống dưới
 
-        # ***** Thêm Debugging Nhãn *****
+        # ***** Thêm Debugging Nhãn cho bệnh *****
         print(f"DEBUG train(): Input disease_labels shape: {disease_labels.shape}")
         print(f"DEBUG train(): Current len(self.disease_classes): {len(self.disease_classes)}")
-        # In một vài mẫu nhãn đầu vào (ví dụ: 5 mẫu đầu)
-        print(f"DEBUG train(): Sample input labels (first 5):\n{disease_labels[:5]}")
+        print(f"DEBUG train(): Sample input disease labels (first 5):\n{disease_labels[:5]}")
         # *******************************
         
         # Ensure disease_labels are in the correct format and have the right number of classes
         if len(disease_labels.shape) == 1:
-             # ***** Thêm Debugging *****
-            print("DEBUG train(): Labels are 1D, converting to categorical.")
-            # **************************
+            print("DEBUG train(): Disease labels are 1D, converting to categorical.")
             disease_labels = tf.keras.utils.to_categorical(disease_labels, num_classes=len(self.disease_classes))
         elif disease_labels.shape[1] != len(self.disease_classes):
-             # ***** Thêm Debugging *****
-            print(f"DEBUG train(): Label shape mismatch! Input shape {disease_labels.shape[1]} != Current classes {len(self.disease_classes)}. Re-encoding.")
-            # **************************
+            print(f"DEBUG train(): Disease label shape mismatch! Input shape {disease_labels.shape[1]} != Current classes {len(self.disease_classes)}. Re-encoding.")
             # If labels have wrong number of classes, convert to indices first
             disease_indices = np.argmax(disease_labels, axis=1)
-            # ***** Thêm Debugging *****
-            print(f"DEBUG train(): Argmax indices from input labels (first 5): {disease_indices[:5]}")
-            # **************************
+            print(f"DEBUG train(): Argmax indices from input disease labels (first 5): {disease_indices[:5]}")
             disease_labels = tf.keras.utils.to_categorical(disease_indices, num_classes=len(self.disease_classes))
-            # ***** Thêm Debugging *****
-            print(f"DEBUG train(): Re-encoded labels shape: {disease_labels.shape}")
-            print(f"DEBUG train(): Sample re-encoded labels (first 5):\n{disease_labels[:5]}")
-            # **************************
+            print(f"DEBUG train(): Re-encoded disease labels shape: {disease_labels.shape}")
+            print(f"DEBUG train(): Sample re-encoded disease labels (first 5):\n{disease_labels[:5]}")
         else:
-             # ***** Thêm Debugging *****
-            print("DEBUG train(): Label shape matches class count. Using as is.")
-             # **************************
+            print("DEBUG train(): Disease label shape matches class count. Using as is.")
         
-        # Print shapes after processing
+        # Huấn luyện mô hình nhận diện loại cây nếu có nhãn
+        if plant_labels is not None:
+            print("Training Plant Type model...")
+            
+            # ***** Thêm Debugging Nhãn cho loại cây *****
+            print(f"DEBUG train(): Input plant_labels shape: {plant_labels.shape}")
+            print(f"DEBUG train(): Current len(self.plant_classes): {len(self.plant_classes)}")
+            print(f"DEBUG train(): Sample input plant labels (first 5):\n{plant_labels[:5]}")
+            # *******************************
+            
+            # Ensure plant_labels are in the correct format
+            if len(plant_labels.shape) == 1:
+                print("DEBUG train(): Plant labels are 1D, converting to categorical.")
+                plant_labels = tf.keras.utils.to_categorical(plant_labels, num_classes=len(self.plant_classes))
+            elif plant_labels.shape[1] != len(self.plant_classes):
+                print(f"DEBUG train(): Plant label shape mismatch! Input shape {plant_labels.shape[1]} != Current classes {len(self.plant_classes)}. Re-encoding.")
+                plant_indices = np.argmax(plant_labels, axis=1)
+                print(f"DEBUG train(): Argmax indices from input plant labels (first 5): {plant_indices[:5]}")
+                plant_labels = tf.keras.utils.to_categorical(plant_indices, num_classes=len(self.plant_classes))
+                print(f"DEBUG train(): Re-encoded plant labels shape: {plant_labels.shape}")
+                print(f"DEBUG train(): Sample re-encoded plant labels (first 5):\n{plant_labels[:5]}")
+            else:
+                print("DEBUG train(): Plant label shape matches class count. Using as is.")
+            
+            # Huấn luyện mô hình nhận diện loại cây
+            plant_history = self.plant_type_model.fit(
+                processed_images, 
+                plant_labels,
+                epochs=adjusted_epochs,
+                batch_size=batch_size if num_samples >= batch_size else 1,
+                validation_split=0.2 if len(processed_images) >= 5 else 0.0,
+                verbose=1
+            )
+            print("Plant Type model training completed!")
+        
+        # Print shapes after processing for disease model
         print(f"Disease labels shape after processing: {disease_labels.shape}")
         
         # Kiểm tra số lượng mẫu
@@ -371,11 +450,12 @@ class PlantDiseaseModel:
         else:
             validation_split = 0.2  # Sử dụng 20% làm validation
             
-        history = self.image_model.fit(
+        # Huấn luyện mô hình nhận diện bệnh
+        disease_history = self.image_model.fit(
             processed_images, 
             disease_labels,
-            epochs=epochs,
-            batch_size=batch_size,
+            epochs=adjusted_epochs,
+            batch_size=batch_size if num_samples >= batch_size else 1,
             validation_split=validation_split,
             verbose=1
         )
@@ -383,63 +463,107 @@ class PlantDiseaseModel:
         print("\nTraining Random Forest model...")
         # Convert disease_labels to class indices for Random Forest
         disease_indices = np.argmax(disease_labels, axis=1)
-        # ***** Thêm Debugging *****
         print(f"DEBUG train(): Final indices for RandomForest (first 5): {disease_indices[:5]}")
-        # **************************
+        
+        # Tuning Random Forest basad on sample size
+        if num_samples < 5:
+            # Với ít mẫu, tăng cường học
+            n_estimators = 200
+            max_depth = 3
+        else:
+            n_estimators = 100
+            max_depth = None
+            
+        # Tạo RF mới với các tham số tối ưu
+        self.env_model = RandomForestClassifier(
+            n_estimators=n_estimators, 
+            max_depth=max_depth,
+            random_state=42,
+            class_weight='balanced' if num_samples < 10 else None
+        )
+        
         self.env_model.fit(env_data, disease_indices)
-        print("Training completed!")
+        print(f"Training completed with {num_samples} samples!")
         
     def predict(self, img, env_data):
-        """
-        Dự đoán loại cây và bệnh từ ảnh và dữ liệu môi trường
-        """
+        """Dự đoán loại cây và bệnh dựa trên hình ảnh và dữ liệu môi trường"""
         try:
-            # Preprocess image
-            if len(img.shape) == 4:  # Nếu đã có batch dimension
-                processed_img = img
-            else:  # Nếu chưa có batch dimension
-                processed_img = np.expand_dims(img, axis=0)
+            # Kiểm tra nếu không có dữ liệu huấn luyện
+            if len(self.training_data['env_data']) == 0:
+                print("Chưa có dữ liệu huấn luyện. Vui lòng thêm dữ liệu huấn luyện trước khi dự đoán.")
+                return {
+                    'error': 'no_training_data',
+                    'message': 'Chưa có dữ liệu huấn luyện. Vui lòng thêm dữ liệu huấn luyện trước khi dự đoán.'
+                }
             
-            # Normalize image if needed
-            if processed_img.dtype != np.float32 or processed_img.max() > 1.0:
-                processed_img = processed_img.astype('float32') / 255.0
-
-            # Get predictions from CNN model
-            cnn_pred = self.image_model.predict(processed_img, verbose=0)
+            # Tiền xử lý hình ảnh
+            if isinstance(img, Image.Image):
+                # Chuyển đổi PIL Image sang numpy array
+                img = np.array(img)
             
-            # Get predictions from Random Forest model for environment data
-            if len(env_data.shape) == 1:
-                env_data = env_data.reshape(1, -1)
+            processed_img = self.preprocess_image(img)
             
+            # Đảm bảo hình ảnh có đúng định dạng (224, 224, 3)
+            if len(processed_img.shape) == 5:  # Nếu có thêm chiều batch
+                processed_img = processed_img[0]  # Lấy phần tử đầu tiên
+            if len(processed_img.shape) == 4:  # Nếu vẫn còn chiều batch
+                processed_img = processed_img[0]  # Lấy phần tử đầu tiên
+            
+            # Tiền xử lý dữ liệu môi trường
+            processed_env = self.preprocess_environment_data(*env_data)
+            
+            # Dự đoán loại cây
+            plant_prediction = self.plant_type_model.predict(np.array([processed_img]))
+            plant_type = self.plant_classes[np.argmax(plant_prediction[0])]
+            plant_confidence = float(np.max(plant_prediction[0]))
+            
+            # Dự đoán bệnh từ hình ảnh
+            disease_prediction = self.image_model.predict(np.array([processed_img]))
+            disease_type = self.disease_classes[np.argmax(disease_prediction[0])]
+            disease_confidence = float(np.max(disease_prediction[0]))
+            
+            # Dự đoán dựa trên dữ liệu môi trường
             try:
-                env_pred = self.env_model.predict_proba(env_data)
+                env_prediction = self.env_model.predict_proba(np.array([processed_env]))
+                env_disease = self.disease_classes[np.argmax(env_prediction[0])]
+                env_confidence = float(np.max(env_prediction[0]))
             except Exception as e:
-                print(f"Lỗi khi dự đoán với Random Forest: {str(e)}")
-                print("Huấn luyện lại mô hình Random Forest với dữ liệu mẫu...")
-                # Tạo và huấn luyện lại với dữ liệu mẫu
-                n_samples = 100
-                X_env = np.random.rand(n_samples, 4)
-                X_env[:, 0] = X_env[:, 0] * 15 + 20
-                X_env[:, 1] = X_env[:, 1] * 50 + 40
-                X_env[:, 2] = X_env[:, 2] * 60 + 20
-                X_env[:, 3] = X_env[:, 3] * 18000 + 2000
-                y_env = np.random.randint(0, len(self.disease_classes), n_samples)
-                self.env_model.fit(X_env, y_env)
-                env_pred = self.env_model.predict_proba(env_data)
-
-            # Ensure env_pred has the same shape as disease_classes
-            if env_pred.shape[1] != len(self.disease_classes):
-                env_pred = np.random.rand(1, len(self.disease_classes))
-                env_pred = env_pred / env_pred.sum(axis=1, keepdims=True)
-
-            # Combine predictions for disease
-            combined_pred = 0.7 * cnn_pred + 0.3 * env_pred
+                print(f"Mô hình dự đoán môi trường chưa được huấn luyện đầy đủ: {str(e)}")
+                env_disease = disease_type  # Sử dụng kết quả từ hình ảnh
+                env_confidence = 0.0
             
-            return combined_pred
+            # Kiểm tra số lượng mẫu
+            num_samples = len(self.training_data['env_data'])
+            
+            # Nếu có ít hơn 10 mẫu, ưu tiên kết quả từ hình ảnh
+            if num_samples < 10:
+                # Ưu tiên dự đoán từ hình ảnh khi còn ít dữ liệu huấn luyện
+                final_disease = disease_type
+                final_confidence = disease_confidence
+                print(f"DEBUG: Ít dữ liệu ({num_samples} mẫu), ưu tiên kết quả từ hình ảnh: {disease_type}")
+            else:
+                # Có nhiều dữ liệu, kết hợp theo độ tin cậy
+                final_disease = disease_type if disease_confidence > env_confidence else env_disease
+                final_confidence = max(disease_confidence, env_confidence)
+                print(f"DEBUG: Đủ dữ liệu ({num_samples} mẫu), kết hợp kết quả. Chọn: {final_disease}")
+            
+            # In thông tin debug
+            print(f"DEBUG predict(): Dự đoán từ hình ảnh: {disease_type} ({disease_confidence:.2f})")
+            print(f"DEBUG predict(): Dự đoán từ môi trường: {env_disease} ({env_confidence:.2f})")
+            print(f"DEBUG predict(): Dự đoán cuối cùng: {final_disease} ({final_confidence:.2f})")
+            
+            return {
+                'plant_type': plant_type,
+                'plant_confidence': plant_confidence,
+                'disease': final_disease,
+                'disease_confidence': final_confidence,
+                'image_disease': disease_type,
+                'image_confidence': disease_confidence,
+                'env_disease': env_disease,
+                'env_confidence': env_confidence
+            }
             
         except Exception as e:
-            print(f"Lỗi trong quá trình dự đoán: {str(e)}")
-            # Trả về dự đoán mặc định nếu có lỗi
-            default_pred = np.zeros((1, len(self.disease_classes)))
-            default_pred[0, 0] = 1  # Mặc định là "Khỏe mạnh"
-            return default_pred 
+            print(f"Lỗi khi dự đoán: {str(e)}")
+            traceback.print_exc()
+            return None 
