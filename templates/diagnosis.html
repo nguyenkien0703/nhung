@@ -260,27 +260,74 @@
                 <pre class="bg-light p-2 border rounded">{{ prediction.details }}</pre>
                 {% endif %}
             {% else %}
-                {% if prediction.image_path %}
-                <img src="{{ prediction.image_path }}" class="preview-image mb-3" alt="Ảnh đã chẩn đoán">
-                {% endif %}
-                
-                <p><strong><i class="bi bi-bug-fill me-2"></i>Bệnh được chẩn đoán:</strong> {{ prediction.disease }}</p>
-                <p><strong><i class="bi bi-graph-up-arrow me-2"></i>Độ tin cậy:</strong></p>
-                <div class="confidence-bar mb-3">
-                    <div class="confidence-level" style="width: {{ prediction.confidence }}%;" title="{{ prediction.confidence }}%"></div>
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card mb-4">
+                            <div class="card-header bg-primary text-white">
+                                <h5 class="mb-0">Thông tin cây</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <h6>Loại cây:</h6>
+                                    <p class="lead">{{ prediction.plant_type }}</p>
+                                    <div class="progress">
+                                        <div class="progress-bar bg-success" role="progressbar" 
+                                            style="width: {{ prediction.plant_confidence }}%"
+                                            aria-valuenow="{{ prediction.plant_confidence }}" 
+                                            aria-valuemin="0" aria-valuemax="100">
+                                            {{ prediction.plant_confidence }}%
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card mb-4">
+                            <div class="card-header bg-primary text-white">
+                                <h5 class="mb-0">Thông tin bệnh</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <h6>Kết quả chẩn đoán:</h6>
+                                    <p class="lead">{{ prediction.disease }}</p>
+                                    <div class="progress">
+                                        <div class="progress-bar bg-success" role="progressbar" 
+                                            style="width: {{ prediction.disease_confidence }}%"
+                                            aria-valuenow="{{ prediction.disease_confidence }}" 
+                                            aria-valuemin="0" aria-valuemax="100">
+                                            {{ prediction.disease_confidence }}%
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <h6>Kết quả từ hình ảnh:</h6>
+                                    <p>{{ prediction.image_disease }} ({{ prediction.image_confidence }}%)</p>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <h6>Kết quả từ môi trường:</h6>
+                                    <p>{{ prediction.env_disease }} ({{ prediction.env_confidence }}%)</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-
-                {% if prediction.probabilities %}
-                <h5 class="mt-4">Xác suất cho từng loại bệnh:</h5>
-                <ul class="probabilities list-group list-group-flush">
-                    {% for disease, prob in prediction.probabilities.items() %}
-                    <li class="probability-item list-group-item px-0">
-                        <span><i class="bi bi-caret-right-fill me-2 small"></i>{{ disease }}</span>
-                        <span class="badge bg-light text-dark">{{ prob }}</span>
-                    </li>
-                    {% endfor %}
-                </ul>
-                {% endif %}
+                
+                <div class="row">
+                    <div class="col-12">
+                        <div class="card mb-4">
+                            <div class="card-header bg-primary text-white">
+                                <h5 class="mb-0">Hình ảnh đã chụp</h5>
+                            </div>
+                            <div class="card-body text-center">
+                                <img src="{{ prediction.image_url }}" class="img-fluid" alt="Hình ảnh cây">
+                            </div>
+                        </div>
+                    </div>
+                </div>
             {% endif %}
         </div>
         {% endif %}
